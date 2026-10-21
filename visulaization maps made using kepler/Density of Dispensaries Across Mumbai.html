@@ -1,0 +1,558 @@
+
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8"/>
+        <title>kepler.gl embedded map</title>
+
+        <!--Uber Font-->
+        <link rel="stylesheet" href="https://d1a3f4spazzrp4.cloudfront.net/kepler.gl/uber-fonts/4.0.0/superfine.css">
+
+        <!--Kepler css-->
+        <link href="https://unpkg.com/kepler.gl@3.3.0-alpha.18/umd/keplergl.min.css" rel="stylesheet">
+
+        <!--MapBox css-->
+        <link href="https://api.tiles.mapbox.com/mapbox-gl-js/v1.1.1/mapbox-gl.css" rel="stylesheet">
+        <link href="https://unpkg.com/maplibre-gl@^3/dist/maplibre-gl.css" rel="stylesheet">
+
+        <!-— facebook open graph tags -->
+        <meta property="og:url" content="http://kepler.gl/" />
+        <meta property="og:title" content="Large-scale WebGL-powered Geospatial Data Visualization Tool" />
+        <meta property="og:description" content="Kepler.gl is a powerful web-based geospatial data analysis tool. Built on a high performance rendering engine and designed for large-scale data sets." />
+        <meta property="og:site_name" content="kepler.gl" />
+        <meta property="og:image" content="https://d1a3f4spazzrp4.cloudfront.net/kepler.gl/kepler.gl-meta-tag.png" />
+        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image:width" content="800" />
+        <meta property="og:image:height" content="800" />
+
+        <!-— twitter card tags -->
+        <meta name="twitter:card" content="summary_large_image">
+        <meta name="twitter:site" content="@openjsf">
+        <meta name="twitter:creator" content="@openjsf">
+        <meta name="twitter:title" content="Large-scale WebGL-powered Geospatial Data Visualization Tool">
+        <meta name="twitter:description" content="Kepler.gl is a powerful web-based geospatial data analysis tool. Built on a high performance rendering engine and designed for large-scale data sets.">
+        <meta name="twitter:image" content="https://d1a3f4spazzrp4.cloudfront.net/kepler.gl/kepler.gl-meta-tag.png" />
+
+        <!--
+          Load React/Redux and the other UMD peer dependencies as ES modules.
+          React >= 19 no longer ships UMD builds, so we pull everything from an
+          ESM CDN (esm.sh) and re-expose them on window as the globals that the
+          kepler.gl UMD bundle (and the inline scripts below) expect.
+
+          IMPORTANT: this file must keep working as a standalone file, i.e. opened
+          directly from disk via the file:// protocol. Native ES module scripts
+          are always fetched with CORS semantics and a file:// document has an
+          opaque (null) origin, so the browser refuses to load native modules or
+          import maps locally. To keep the standalone-file behaviour we run
+          es-module-shims in "shim mode" (importmap-shim / module-shim tags): it
+          is a classic script (loads fine from file://) that resolves the import
+          map and executes the modules as blob: URLs, sidestepping that
+          restriction. The import map pins a single React instance and uses
+          external= so react-redux / styled-components reuse it (otherwise React
+          hooks break).
+        -->
+        <script>
+          // Trigger es-module-shims "shim mode" so it always parses the
+          // importmap-shim / module-shim tags below instead of deferring to the
+          // native loader (which fails under file://).
+          window.esmsInitOptions = {shimMode: true};
+        </script>
+        <script>
+          // Replace the loading overlay with an error message.
+          // Safe to call at any time — once React has mounted and removed
+          // #kepler-load-screen this becomes a no-op.
+          window._keplerShowLoadError = function(msg) {
+            var loadScreen = document.getElementById('kepler-load-screen');
+            if (!loadScreen) return;
+            var spinner = loadScreen.querySelector('.kepler-spinner');
+            var label = loadScreen.querySelector('.kepler-load-label');
+            if (spinner) spinner.style.display = 'none';
+            if (label) label.style.display = 'none';
+            var errEl = document.createElement('div');
+            errEl.className = 'kepler-load-error';
+            errEl.textContent = msg || 'Failed to load the map. Check your internet connection and reload the page.';
+            loadScreen.appendChild(errEl);
+          };
+          // Catch unhandled promise rejections (e.g. ES module imports failing
+          // inside the module-shim script before loadScript is ever called).
+          window.addEventListener('unhandledrejection', function(event) {
+            console.error('kepler.gl: unhandled rejection during map load', event.reason);
+            window._keplerShowLoadError('Failed to load the map. Check your internet connection and reload the page.');
+          });
+        </script>
+        <script src="https://unpkg.com/es-module-shims@2.8.1/dist/es-module-shims.js" crossorigin="anonymous"></script>
+        
+        <script type="importmap-shim">
+          {
+            "imports": {
+              "react": "https://esm.sh/react@19.1.0",
+              "react/jsx-runtime": "https://esm.sh/react@19.1.0/jsx-runtime",
+              "react-dom": "https://esm.sh/react-dom@19.1.0?external=react",
+              "react-dom/client": "https://esm.sh/react-dom@19.1.0/client?external=react",
+              "redux": "https://esm.sh/redux@5.0.1",
+              "react-redux": "https://esm.sh/react-redux@9.3.0?external=react,react-dom,redux",
+              "styled-components": "https://esm.sh/styled-components@6.1.19?external=react,react-dom"
+            }
+          }
+        </script>
+
+        <!--
+          Expose the ES modules as globals for the UMD kepler.gl bundle, then load
+          the kepler.gl UMD script and the app bootstrap script only after those
+          globals are available. The kepler.gl UMD bundle is a classic script
+          (which loads fine from file://), so it is injected dynamically here once
+          the globals are in place to guarantee the correct ordering.
+        -->
+        <script type="module-shim">
+          import * as React from 'react';
+          import * as ReactDOM from 'react-dom';
+          import * as ReactDOMClient from 'react-dom/client';
+          import * as Redux from 'redux';
+          import * as ReactRedux from 'react-redux';
+          import * as StyledComponents from 'styled-components';
+
+          // esm.sh namespaces expose the module's default export under .default.
+          // Normalize so the globals match the shape the React 18 UMD builds had:
+          // - React / Redux / ReactRedux keep their full namespace (named exports).
+          // - ReactDOM merges the classic + client entry so both createPortal and
+          //   createRoot are available (createRoot moved to react-dom/client in v19).
+          // - styled-components' global must be the callable default (styled) with
+          //   its named exports (ThemeProvider, withTheme, css, keyframes, ...)
+          //   attached, since the kepler.gl bundle relies on both.
+          window.React = React.default || React;
+          window.ReactDOM = Object.assign({}, ReactDOM.default || ReactDOM, ReactDOMClient);
+          window.Redux = Redux.default || Redux;
+          window.ReactRedux = ReactRedux.default || ReactRedux;
+          window.styled = Object.assign(StyledComponents.default, StyledComponents);
+
+          function loadScript(src) {
+            return new Promise(function(resolve, reject) {
+              var script = document.createElement('script');
+              script.src = src;
+              script.crossOrigin = 'anonymous';
+              script.onload = resolve;
+              script.onerror = reject;
+              document.head.appendChild(script);
+            });
+          }
+
+          // Load the kepler.gl UMD bundle after the globals are in place, then run
+          // the app bootstrap scripts (marked as type="text/kepler-bootstrap").
+          loadScript("https://unpkg.com/kepler.gl@3.3.0-alpha.18/umd/keplergl.min.js")
+            .then(function() {
+              var bootstraps = document.querySelectorAll('script[type="text/kepler-bootstrap"]');
+              bootstraps.forEach(function(node) {
+                var script = document.createElement('script');
+                script.text = node.textContent;
+                document.body.appendChild(script);
+              });
+            })
+            .catch(function(error) {
+              console.error('kepler.gl: failed to load UMD bundle', error);
+              window._keplerShowLoadError('Failed to load the map bundle. Check your internet connection and reload the page.');
+            });
+        </script>
+        <style type="text/css">
+          body {margin: 0; padding: 0; overflow: hidden;}
+          #kepler-load-screen {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: #29323c;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            z-index: 9999;
+            font-family: ff-clan-web-pro, 'Helvetica Neue', Helvetica, sans-serif;
+            color: #a0a7b4;
+          }
+          #kepler-load-screen .kepler-spinner {
+            width: 48px; height: 48px;
+            border: 4px solid rgba(255,255,255,0.08);
+            border-top-color: #1fbad6;
+            border-radius: 50%;
+            animation: kepler-spin 0.8s linear infinite;
+          }
+          #kepler-load-screen .kepler-load-label {
+            font-size: 13px;
+            letter-spacing: 0.5px;
+          }
+          #kepler-load-screen .kepler-load-error {
+            font-size: 13px;
+            color: #f05e45;
+            max-width: 360px;
+            text-align: center;
+            line-height: 1.5;
+          }
+          @keyframes kepler-spin { to { transform: rotate(360deg); } }
+        </style>
+
+        <!--MapBox token-->
+        <!--
+          SECURITY NOTE: Your Mapbox access token is embedded below in plain text.
+          Anyone with access to this HTML file can see and use this token.
+          Consider using a scoped token with URL restrictions to limit misuse.
+          See: https://docs.mapbox.com/accounts/guides/tokens/#url-restrictions
+        -->
+        <script>
+          /**
+           * Provide your MapBox Token
+           **/
+          window.MAPBOX_TOKEN = "pk.eyJ1IjoidWNmLW1hcGJveCIsImEiOiJjbDBiYzlveHgwdnF0M2NtZzUzZWZuNWZ4In0.l9J8ptz3MKwaU9I4PtCcig";
+          window.WARNING_MESSAGE = 'No Mapbox token provided. Mapbox basemaps will not be available. To enable them, edit this file and set MAPBOX_TOKEN to your Mapbox access key.';
+        </script>
+      </head>
+      <body>
+        <!-- We will put our React component inside this div. -->
+        <div id="app">
+          <div id="kepler-load-screen">
+            <div class="kepler-spinner"></div>
+            <div class="kepler-load-label">Loading map…</div>
+          </div>
+        </div>
+
+        <!--
+          Load our React component. This script is not executed inline: it is run
+          by the module shim in <head> once the kepler.gl UMD bundle (and its
+          global peer dependencies) have finished loading.
+        -->
+        <script type="text/kepler-bootstrap">
+          /* Validate Mapbox Token */
+          if ((MAPBOX_TOKEN || '') === '' || MAPBOX_TOKEN === 'PROVIDE_MAPBOX_TOKEN') {
+            console.warn('[kepler.gl]', WARNING_MESSAGE);
+          }
+
+          const branding = {"appName":"kepler.gl","appWebsite":"http://kepler.gl/","appIcon":null,"appNameColor":"#1FBAD6"};
+
+          /** STORE **/
+          // Pre-seed styleType so the correct basemap fetch starts on the very
+          // first render, avoiding a flash of the default dark basemap.
+          // options.config has the versioned envelope shape: { version, config: { mapStyle, ... } }
+          const savedStyleType = "dark-matter";
+
+          const reducers = (function createReducers(redux, keplerGl, styleType) {
+            return redux.combineReducers({
+              // mount keplerGl reducer
+              keplerGl: keplerGl.keplerGlReducer.initialState({
+                uiState: {
+                  readOnly: true,
+                  currentModal: null,
+                  exportMap: Object.assign({}, keplerGl.INITIAL_UI_STATE.exportMap, branding)
+                },
+                ...(styleType ? {mapStyle: {styleType}} : {})
+              })
+            });
+          }(Redux, KeplerGl, savedStyleType));
+
+          const middleWares = (function createMiddlewares(keplerGl) {
+            return keplerGl.enhanceReduxMiddleware([
+              // Add other middlewares here
+            ]);
+          }(KeplerGl));
+
+          const enhancers = (function craeteEnhancers(redux, middles) {
+            return redux.applyMiddleware(...middles);
+          }(Redux, middleWares));
+
+          const store = (function createStore(redux, enhancers) {
+            return redux.createStore(
+              reducers,
+              {},
+              redux.compose(enhancers)
+            );
+          }(Redux, enhancers));
+          /** END STORE **/
+
+          /** COMPONENTS **/
+          var BrandLogo = (function createBrandLogo(react, branding) {
+            return function BrandLogo(props) {
+              var fixed = Boolean(props && props.fixed);
+              var icon = branding.appIcon
+                ? react.createElement("img", {
+                    src: branding.appIcon,
+                    alt: "",
+                    "aria-hidden": true,
+                    style: {width: "22px", height: "15px", objectFit: "contain"}
+                  })
+                : react.createElement(
+                    "svg",
+                    {width: "22px", height: "15px", viewBox: "0 0 22 15", "aria-hidden": true},
+                    react.createElement(
+                      "g",
+                      {transform: "translate(11, -3) rotate(45.000000)"},
+                      react.createElement("rect", {fill: "#535C6C", x: "0", y: "5", width: "10", height: "10"}),
+                      react.createElement("rect", {fill: "#1FBAD6", x: "5", y: "0", width: "10", height: "10"})
+                    )
+                  );
+
+              return react.createElement(
+                "div",
+                {
+                  className: fixed ? "logo-container" : "side-panel-logo",
+                  style: fixed
+                    ? {position: "fixed", zIndex: 10000, padding: "4px", display: "flex", alignItems: "center"}
+                    : {display: "flex", alignItems: "flex-start"}
+                },
+                react.createElement(
+                  "div",
+                  {style: {marginTop: fixed ? 0 : "3px"}},
+                  icon
+                ),
+                react.createElement(
+                  "div",
+                  {className: "logo__title", style: {marginLeft: "6px"}},
+                  react.createElement(
+                    "a",
+                    {
+                      className: "kepler_gl__logo logo__link",
+                      href: branding.appWebsite,
+                      target: "_blank",
+                      rel: "noopener noreferrer",
+                      style: {
+                        color: branding.appNameColor,
+                        fontFamily: "ff-clan-web-pro, 'Helvetica Neue', Helvetica, sans-serif",
+                        fontSize: "14px",
+                        fontWeight: 600,
+                        letterSpacing: "1.17px",
+                        textDecoration: "none"
+                      }
+                    },
+                    react.createElement("span", {style: {color: branding.appNameColor}}, branding.appName)
+                  ),
+                  !fixed && props && props.version
+                    ? react.createElement(
+                        "div",
+                        {
+                          className: "logo__version",
+                          style: {fontSize: "10px", color: "#a0a7b4", letterSpacing: "0.83px", lineHeight: "14px"}
+                        },
+                        props.version
+                      )
+                    : null
+                )
+              );
+            };
+          }(React, branding));
+
+          /** Custom map control factory to restore export editing and chart display. **/
+          var CustomMapControlFactory = (function createCustomMapControl(react, keplerGl) {
+            var EffectControlFactory = keplerGl.EffectControlFactory;
+            var EffectManagerFactory = keplerGl.EffectManagerFactory;
+            var AnnotationControlFactory = keplerGl.AnnotationControlFactory;
+            var AnnotationManagerFactory = keplerGl.AnnotationManagerFactory;
+            var ChartControlFactory = keplerGl.ChartControlFactory;
+            var ChartManagerFactory = keplerGl.ChartManagerFactory;
+            var MapControlFactory = keplerGl.MapControlFactory;
+
+            if (
+              !EffectControlFactory ||
+              !EffectManagerFactory ||
+              !AnnotationControlFactory ||
+              !AnnotationManagerFactory ||
+              !ChartControlFactory ||
+              !ChartManagerFactory ||
+              !MapControlFactory
+            ) {
+              console.warn('kepler.gl: Export control factories not available, skipping control injection');
+              return null;
+            }
+
+            function ExportMapControlFactory(
+              EffectControl,
+              EffectManager,
+              AnnotationControl,
+              AnnotationManager,
+              ChartControl,
+              ChartManager
+            ) {
+              var args = Array.prototype.slice.call(arguments, 6);
+              var MapControl = MapControlFactory.apply(null, args);
+              var defaultActionComponents = MapControl.defaultActionComponents || [];
+
+              var ExportMapControl = function ExportMapControl(props) {
+                var readOnly = Boolean(props.readOnly);
+                var mapControls = props.mapControls || {};
+                var charts = props.charts || [];
+                var actionComponents = defaultActionComponents.filter(function(ActionComponent) {
+                  return !readOnly || ActionComponent !== AnnotationControl;
+                });
+                if (!readOnly) {
+                  actionComponents = actionComponents.concat([ChartControl, EffectControl]);
+                }
+                var showEffects = !readOnly && Boolean(mapControls.effect && mapControls.effect.active);
+                var showAnnotations = !readOnly && Boolean(mapControls.annotation && mapControls.annotation.active);
+                var showChartPanel = !readOnly && Boolean(mapControls.chart && mapControls.chart.active);
+                var hasPinnedCharts = charts.some(function(chart) { return chart.pinned !== false; });
+                var showCharts = readOnly ? charts.length > 0 : showChartPanel || hasPinnedCharts;
+                var rightPanelVisible = showEffects || showAnnotations || showCharts;
+                return react.createElement(
+                  'div',
+                  {style: {
+                    position: 'absolute',
+                    display: 'flex',
+                    top: (props.top || 0) + 'px',
+                    right: 0,
+                    zIndex: 1,
+                    maxHeight: '100%',
+                    pointerEvents: 'none'
+                  }},
+                  react.createElement(
+                    'div',
+                    {style: {position: 'relative', pointerEvents: 'all'}},
+                    react.createElement(MapControl, Object.assign({}, props, {top: 0, actionComponents: actionComponents}))
+                  ),
+                  rightPanelVisible
+                    ? react.createElement('div', {
+                        style: {
+                          maxHeight: '100%',
+                          overflow: 'hidden',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          pointerEvents: 'all',
+                          marginTop: '10px'
+                        }
+                      },
+                      showAnnotations ? react.createElement(AnnotationManager, null) : null,
+                      showCharts ? react.createElement(ChartManager, {
+                        panelActive: showChartPanel,
+                        isExport: readOnly
+                      }) : null,
+                      showEffects ? react.createElement(EffectManager, null) : null
+                      )
+                    : null
+                );
+              };
+
+              return ExportMapControl;
+            }
+            ExportMapControlFactory.deps = [
+              EffectControlFactory,
+              EffectManagerFactory,
+              AnnotationControlFactory,
+              AnnotationManagerFactory,
+              ChartControlFactory,
+              ChartManagerFactory
+            ].concat(MapControlFactory.deps);
+
+            return [MapControlFactory, ExportMapControlFactory];
+          }(React, KeplerGl));
+
+          var CustomPanelHeaderFactory = (function createCustomPanelHeader(react, keplerGl, BrandLogo) {
+            var PanelHeaderFactory = keplerGl.PanelHeaderFactory;
+            if (!PanelHeaderFactory) {
+              console.warn('kepler.gl: Panel header factory not available, skipping branding injection');
+              return null;
+            }
+
+            function ExportPanelHeaderFactory() {
+              var PanelHeader = PanelHeaderFactory.apply(null, arguments);
+              return function ExportPanelHeader(props) {
+                return react.createElement(
+                  PanelHeader,
+                  Object.assign({}, props, {logoComponent: BrandLogo})
+                );
+              };
+            }
+            ExportPanelHeaderFactory.deps = PanelHeaderFactory.deps;
+            return [PanelHeaderFactory, ExportPanelHeaderFactory];
+          }(React, KeplerGl, BrandLogo));
+
+          var CustomFactories = [CustomMapControlFactory, CustomPanelHeaderFactory].filter(Boolean);
+          var KeplerGlComponent = CustomFactories.length
+            ? KeplerGl.injectComponents(CustomFactories)
+            : KeplerGl.KeplerGl;
+
+          var KeplerElement = (function makeKeplerElement(react, keplerGl, mapboxToken, branding, BrandLogo) {
+            return function App() {
+              var rootElm = react.useRef(null);
+              var _useState = react.useState({
+                width: window.innerWidth,
+                height: window.innerHeight
+              });
+              var windowDimension = _useState[0];
+              var setDimension = _useState[1];
+              react.useEffect(function sideEffect(){
+                function handleResize() {
+                  setDimension({width: window.innerWidth, height: window.innerHeight});
+                };
+                window.addEventListener('resize', handleResize);
+                return function() {window.removeEventListener('resize', handleResize);};
+              }, []);
+              // Remove the loading overlay after the first render is painted.
+              // useEffect fires post-commit, so this is safe under React 19's
+              // concurrent renderer — the map is visible before the overlay goes away.
+              react.useEffect(function removeLoadScreen() {
+                var loadScreen = document.getElementById('kepler-load-screen');
+                if (loadScreen) loadScreen.remove();
+              }, []);
+              return react.createElement(
+                'div',
+                {style: {position: 'absolute', left: 0, width: '100vw', height: '100vh'}},
+                react.createElement(BrandLogo, {fixed: true}),
+                react.createElement(KeplerGlComponent, {
+                  mapboxApiAccessToken: mapboxToken,
+                  id: "map",
+                  width: windowDimension.width,
+                  height: windowDimension.height,
+                  appName: branding.appName,
+                  appWebsite: branding.appWebsite
+                })
+              )
+            }
+          }(React, KeplerGl, MAPBOX_TOKEN, branding, BrandLogo));
+
+          const app = (function createReactReduxProvider(react, reactRedux, KeplerElement) {
+            return react.createElement(
+              reactRedux.Provider,
+              {store},
+              react.createElement(KeplerElement, null)
+            )
+          }(React, ReactRedux, KeplerElement));
+          /** END COMPONENTS **/
+
+          /** Render **/
+          (function render(react, reactDOM, app) {
+            const container = document.getElementById('app');
+            const root = reactDOM.createRoot(container);
+            root.render(app);
+          }(React, ReactDOM, app));
+
+          /**
+           * Customize map.
+           * In the following section you can use the store object to dispatch Kepler.gl actions
+           * to add new data and customize behavior
+           */
+          (function customize(keplerGl, store) {
+            const datasets = [{"version":"v1","data":{"id":"lqft7w","label":"Mumbai City Dispensaries Map.csv","color":[143,47,191],"allData":[[72.83,18.92,0,"\n    Colaba Dispensary\n   ","Colaba Dispensary\n","1st Floor MCGM Bldg Lala Nigam Rd Mum-5\n",1,1,"Public Health Dept\n","@mybmcHealthDept\n","A\n"],[72.84,18.95,0,"\n    Saboo Sidique Rd. Dispensary (Paltan Road)\n   ","Saboo Sidique Rd. Dispensary (Paltan Road)\n","Rota Printing Press 2nd floor Camac Bridge Masjid -1\n",2,2,"Public Health Dept\n","@mybmcHealthDept\n","A\n"],[72.83,18.94,0,"\n    Maruti Lane Dispensary\n   ","Maruti Lane Dispensary\n","Near Handloom House Maruti Lane , Fort\n",3,3,"Public Health Dept\n","@mybmcHealthDept\n","A\n"],[72.8344,18.9405,0,"\n    Head Office Dispensary\n   ","Head Office Dispensary\n","Municipal Head Office 2nd Floor ,CST\n",4,4,"Public Health Dept\n","@mybmcHealthDept\n","A\n"],[72.8344,18.9405,0,"\n    Head Office Ayurvedic\n   ","Head Office Ayurvedic\n","Municipal Head Office 2nd Floor Annex Bldg Mumbai -1\n",5,5,"Public Health Dept\n","@mybmcHealthDept\n","A\n"],[72.84,18.93,0,"\n    S B S Road. Dispensary\n   ","S B S Road. Dispensary\n","303 Chowksi Mension 1st floor SBS Rd Fort, Mumbai -1\n",6,6,"Public Health Dept\n","@mybmcHealthDept\n","A\n"],[72.83,18.96,0,"\n    SVP Road Dispensary\n   ","SVP Road Dispensary\n","259'SVP rd Disp, Municipal Urdu school,SVP rd Mumbai-09\n",7,7,"Public Health Dept\n","@mybmcHealthDept\n","B\n"],[72.84,18.96,0,"\n    Walphakdi Dispensary\n   ","Walphakdi Dispensary\n","BMC block A ground floor Mavji Rathod rd,Noorbaugh Mumbai-9\n",8,8,"Public Health Dept\n","@mybmcHealthDept\n","B\n"],[72.83,18.95,0,"\n    Jail Road Dispensary\n   ","Jail Road Dispensary\n","44,jail rd disp,20 kolsa mohalla ground floor pydhunie Mumbai-3\n",9,9,"Public Health Dept\n","@mybmcHealthDept\n","B\n"],[72.83,18.96,0,"\n    Jail Road Unanai Dispensary\n   ","Jail Road Unanai Dispensary\n","C/O 259'SVP rd Disp, Municipal Urdu school,SVP rd Mumbai-09\n",10,10,"Public Health Dept\n","@mybmcHealthDept\n","B\n"],[72.83,18.95,0,"\n    Kolsa Mohalla Unani Dispensary\n   ","Kolsa Mohalla Unani Dispensary\n","C/O 44, jail rd disp,20 kolsa mohalla,1st floor pydhunie Mumbai-3\n",11,11,"Public Health Dept\n","@mybmcHealthDept\n","B\n"],[72.83,18.96,0,"\n    Ghoghari Mohalla Dispensary\n   ","Ghoghari Mohalla Dispensary\n","47 Ghoghari Mohalla Mumbai 400003\n",12,12,"Public Health Dept\n","@mybmcHealthDept\n","C\n"],[72.83,18.96,0,"\n    Panjrapole Dispensary\n   ","Panjrapole Dispensary\n","Panjarapol BMC Dispensary 1st Panjarapol Lane near C.P. Fank Mumbai 400004.\n",13,13,"Public Health Dept\n","@mybmcHealthDept\n","C\n"],[72.82,18.95,0,"\n    Thakurdwar Dispensary\n   ","Thakurdwar Dispensary\n","Babasaheb Jaykar Marg Ground Floor Thakurdwar Dispensary\n",14,14,"Public Health Dept\n","@mybmcHealthDept\n","C\n"],[72.8265,18.9463,0,"\n    Chandanwadi Dispensary\n   ","Chandanwadi Dispensary\n","Chandanwadi Mun.Corporation Desp C Ward S.P Marg Chandanwadi Chirabazar Mumbai\n",15,15,"Public Health Dept\n","@mybmcHealthDept\n","C\n"],[72.83,18.96,0,"\n    Duncan Road Dispensary\n   ","Duncan Road Dispensary\n","2nd Duncan Road 2nd Cross Lane\n",16,16,"Public Health Dept\n","@mybmcHealthDept\n","C\n"],[72.81,18.96,0,"\n    Nana Chowk Dispensary\n   ","Nana Chowk Dispensary\n","JSS Municipal School,Ground Floor,Near Frare bridge,Grant road(W),Mumbai 400007\n",17,17,"Public Health Dept\n","@mybmcHealthDept\n","D\n"],[72.8183,18.9717,0,"\n    Bane Compound Dispensary(Tulshiwadi)\n   ","Bane Compound Dispensary(Tulshiwadi)\n","Bane Compound,Sane Guruji marg, Tardeo mumbai-34\n",18,18,"Public Health Dept\n","@mybmcHealthDept\n","D\n"],[72.82,18.97,0,"\n    R. S. Nimkar Disp\n   ","R. S. Nimkar Disp\n","R S Nimkar Marg,Near Pratiksha Tower,Grant Road (E),Mumbai-400008\n",19,19,"Public Health Dept\n","@mybmcHealthDept\n","D\n"],[72.82,18.95,0,"\n    R. R.R. Marg Dispensary\n   ","R. R.R. Marg Dispensary\n","303 RRR Marg mun.dispensary,rrr marg, charni road(E), Mumbai-04\n",20,20,"Public Health Dept\n","@mybmcHealthDept\n","D\n"],[72.82,18.98,0,"\n    Tardeo Flat Dispensary\n   ","Tardeo Flat Dispensary\n","B-1 Tower,Dr.Babasaheb Ambedkar nagar,Mahalaxmi,Mumbai-400034\n",21,21,"Public Health Dept\n","@mybmcHealthDept\n","D\n"],[72.8517,18.9615,0,"\n    Banganga Dispensary\n   ","Banganga Dispensary\n","Banganga kawale math Municipal school,Walkeshwar,Mumbai 400006\n",22,22,"Public Health Dept\n","@mybmcHealthDept\n","D\n"],[72.83,18.98,0,"\n    N.M. Joshi Dispensary\n   ","N.M. Joshi Dispensary\n","N.M. Joshi Marg,Opp Byculla railway station Mumbai- 11\n",23,23,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.83,18.98,0,"\n    R.J. Compound Dispensary\n   ","R.J. Compound Dispensary\n","Keshavrao Khade Marg ,Satrasta,Byculla Mumbai-11\n",24,24,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.83,18.97,0,"\n    Souter Street Dispensary\n   ","Souter Street Dispensary\n","Meghraj Sethi Marg,opp Zula maidan Byculla Mumbai- 08\n",25,25,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.83,18.96,0,"\n    Huzaria Street Dispensary\n   ","Huzaria Street Dispensary\n","Huzeria Street ,Nagpada ,Mumbai- 10\n",26,26,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.8399,18.9687,0,"\n    Tadwadi Tank Dispensary\n   ","Tadwadi Tank Dispensary\n","Residency Tower,1st Floor,old Nesbit Road,dockyard Road Mumbai-10\n",27,27,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.84,18.97,0,"\n    Tank Square Garden Dispensary\n   ","Tank Square Garden Dispensary\n","Behind Mazgoan post Office,Mascerhance Road, Mazgoan,Mumbai- 10\n",28,28,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.84,18.98,0,"\n    D P Wadi Dispensary\n   ","D P Wadi Dispensary\n","Kapreshwar Krupa,Chs.Umesh Salunkhe Marg Mumbai-  33\n",29,29,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.84,18.98,0,"\n    E S Patanwala Dispensary\n   ","E S Patanwala Dispensary\n","E.S. Patanwala Marg,Maratha Compound,Byculla Mumbai- 27\n",30,30,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.84,18.98,0,"\n    Motishah  Lane Dispensary\n   ","Motishah  Lane Dispensary\n","Near B.I.T. chwal, Love Lane,Mumbai- 10\n",31,31,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.83,18.97,0,"\n    Gaurabai Dispensary\n   ","Gaurabai Dispensary\n","Ozone Building  Nagpada Mumbai .\n",32,32,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.83,18.96,0,"\n    Siddharth Nagar  Dispensary\n   ","Siddharth Nagar  Dispensary\n","siddharth Nagar Porta Cabin, Kamathipura Mumbai- 8\n",33,33,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.8441,18.9654,0,"\n    Nawab Tank Dispensary\n   ","Nawab Tank Dispensary\n","Porta Cabin, Chimanaji Ranoji Street, Dockyard East Mumbai- 10\n",34,34,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.83,18.97,0,"\n    Hakim Ajmal Khan Unani (Souter Street) Dispensary\n   ","Hakim Ajmal Khan Unani (Souter Street) Dispensary\n","Meghraj Sethi Marg,opp Zula maidan Byculla Mumbai- 08\n",35,35,"Public Health Dept\n","@mybmcHealthDept\n","E\n"],[72.84,19.01,0,"\n    F/S Parel Dispensary\n   ","F/S Parel Dispensary\n","Room no.12,F/South ward offiice Bldg.Parel,Mumbai-12\n",36,36,"Public Health Dept\n","@mybmcHealthDept\n","FS\n"],[72.84,19.01,0,"\n    Gautam Ngr. Dispensary\n   ","Gautam Ngr. Dispensary\n","Dadasaheb Phalkr Road,Dadar(E),Mumbai-14\n",37,37,"Public Health Dept\n","@mybmcHealthDept\n","FS\n"],[72.85,19.01,0,"\n    Naigaon Dispensary\n   ","Naigaon Dispensary\n","S.S.Wagh Marg,Naigaon Mumbai-14\n",38,38,"Public Health Dept\n","@mybmcHealthDept\n","FS\n"],[72.85,19.01,0,"\n    Kidwai Nagar Dispensary\n   ","Kidwai Nagar Dispensary\n","Rafiahmad Kidwai Road,Near Hari Masjid,Kidwainagar Wadal.Mumbai-31\n",39,39,"Public Health Dept\n","@mybmcHealthDept\n","FS\n"],[72.85,19,0,"\n    Sewree Cross Road Dispensary\n   ","Sewree Cross Road Dispensary\n","Opp.Old Post Office,Sewree Cross Rd.Disp.,Sewree Mumbai-15\n",40,40,"Public Health Dept\n","@mybmcHealthDept\n","FS\n"],[72.85,19,0,"\n    A.D. Marg Dispensary (private Property)\n   ","A.D. Marg Dispensary (private Property)\n","Mulraj Bhavan,A.D.Marg,Sewree-15\n",41,41,"Public Health Dept\n","@mybmcHealthDept\n","FS\n"],[72.84,18.99,0,"\n    Ambewadi  Dispensary\n   ","Ambewadi  Dispensary\n","G.D.Ambekar Marg,Near Pooja Hotel ,Kalachowy,Mumbai-33\n",42,42,"Public Health Dept\n","@mybmcHealthDept\n","FS\n"],[72.85,18.99,0,"\n    Abhuday Nagar Dispensary\n   ","Abhuday Nagar Dispensary\n","Bldg.no.12,Near N.M.K.School,Cottn Green ,Kalachowky\n",43,43,"Public Health Dept\n","@mybmcHealthDept\n","FS\n"],[72.83,18.99,0,"\n    Triveni Sadan Dispensary\n   ","Triveni Sadan Dispensary\n","Bldg.no.2,MahadevPalav Marg,Currey Road,Mumbai-12\n",44,44,"Public Health Dept\n","@mybmcHealthDept\n","FS\n"],[72.85,19.03,0,"\n    L.B.S. Market Dispensary\n   ","L.B.S. Market Dispensary\n","LBS Municipal Market Dispensary Bld, 1st Floor L.N Road Beside Matunga Central Railway Station(E),Mumbai-19\n",45,45,"Public Health Dept\n","@mybmcHealthDept\n","FN\n"],[72.86,19.02,0,"\n    Wadala Dispensary\n   ","Wadala Dispensary\n","Madona Building Ground Floor Nathalal Parekh Marg Wadala 400031\n",46,46,"Public Health Dept\n","@mybmcHealthDept\n","FN\n"],[72.86,19.02,0,"\n    Korba Mithagar Dispensary\n   ","Korba Mithagar Dispensary\n","Korba Mithagar Dipensary,Barkat Ali Naka, OPP Wadala Police Station,Near Municipal Marathi School\n",47,47,"Public Health Dept\n","@mybmcHealthDept\n","FN\n"],[72.87,19.04,0,"\n    Pratiksha Nagar Transit Camp Dispensary\n   ","Pratiksha Nagar Transit Camp Dispensary\n","Pratiksha Nagar Municipal Dispensary, Room No 3,4,5, & 6, Ground Floor,Mhada Building no T-1, Behind Transit Camp Post Office, Sion -22\n",48,48,"Public Health Dept\n","@mybmcHealthDept\n","FN\n"],[72.86,19.03,0,"\n    New Transit Camp Dispensary\n   ","New Transit Camp Dispensary\n","C S NO.404/6, PLOT NO.104, OPP.NEW SIES COLLEGE, ROAD NO.29, SION EAST , MUMBAI 22.\n",49,49,"Public Health Dept\n","@mybmcHealthDept\n","FN\n"],[72.87,19.03,0,"\n    Antop Hill Dispensary\n   ","Antop Hill Dispensary\n","Oppo Antop Hill Bus Depot,Shaikh Mistri Dargah, Road Antop Hill Mumbai 400037\n",50,50,"Public Health Dept\n","@mybmcHealthDept\n","FN\n"],[72.87,19.04,0,"\n    Rawli Camp Dispensary\n   ","Rawli Camp Dispensary\n","Raoli Camp MH UPHC, Sardar Nagar-4, Sion Koliwada, Mumbai-37\n",51,51,"Public Health Dept\n","@mybmcHealthDept\n","FN\n"],[72.8517,18.9615,0,"\n    Worli Koliwada Dispensary\n   ","Worli Koliwada Dispensary\n","Ground floor near worli bus depot near  police chowki Mumbai-25\n",52,52,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.82,18.99,0,"\n    Jijamata Nagar Dispensary\n   ","Jijamata Nagar Dispensary\n","dispensary in container opp four season hospital Dr E Moses Road worli Mumbai-18\n",53,53,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.83,19,0,"\n    S.B. Marg Dispensary\n   ","S.B. Marg Dispensary\n","opp one India bull center BMC building Ground  floor near shikshak bhavan Elephiston Mumbai -13\n",54,54,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.83,19,0,"\n    Ferguson Road Dispensary\n   ","Ferguson Road Dispensary\n","160-A Hasan building ground floor N M Joshi marg lower parel Mumbai-13\n",55,55,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.83,19,0,"\n    Maharashtra High School Compound  Dispensary\n   ","Maharashtra High School Compound  Dispensary\n","Municipal dispensary ground floor N M Joshi marg  Mumbai -13\n",56,56,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.82,18.99,0,"\n    Beggars Home Dispensary\n   ","Beggars Home Dispensary\n","Dr King’s George V memorial bld Dr E Moses road  near famous studio Mahalaxmi Mumbai -11\n",57,57,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.83,19.02,0,"\n    Prabhadevi Dispensary\n   ","Prabhadevi Dispensary\n","Paricharika niwas building ground floor old prabhadevi road opp Giayaman house Mumbai -13\n",58,58,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.8227,18.9978,0,"\n    Welfare center Dispensary\n   ","Welfare center Dispensary\n","Ground floor shivalya building  Ganapat rao kadam marg Mumbai -13\n",59,59,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.82,19.01,0,"\n    Sasmira Marg Dispensary\n   ","Sasmira Marg Dispensary\n","Ground floor  sasmira marg behinsd worli labour camp Mumbai -25\n",60,60,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.82,19,0,"\n    BDD Chawl Dispensary\n   ","BDD Chawl Dispensary\n","Building  no 45 ground floor N M Joshi marg  opp jambori Maidan worli\n",61,61,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.83,18.99,0,"\n    Currey Road Dispensary\n   ","Currey Road Dispensary\n","S B Pawar marg near Municipal Gardan Low leval north Mumbai -13\n",62,62,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.83,19.01,0,"\n    Zandu Ayurvedic Dispensary\n   ","Zandu Ayurvedic Dispensary\n","opp one India bull center BMC building Ground  floor near shikshak bhavan Elephiston Mumbai -13\n",63,63,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.83,19.02,0,"\n    Prabhadevi Avurvedic Dispensary\n   ","Prabhadevi Avurvedic Dispensary\n","Dnyaneshwar apartment Ground floor veer savarkar marg Mumbai -25\n",64,64,"Public Health Dept\n","@mybmcHealthDept\n","GS\n"],[72.84,19.02,0,"\n    Bai Gulbai Dispensary\n   ","Bai Gulbai Dispensary\n","St. Anthony Building, Groung floor ,Bhavani shankar road ,dadar west-28\n",65,65,"Public Health Dept\n","@mybmcHealthDept\n","GN\n"],[72.84,19.03,0,"\n    Shree Cinema Dispensary\n   ","Shree Cinema Dispensary\n","Welfare Center Building, Dilip Gupte,Road mahim-16\n",66,66,"Public Health Dept\n","@mybmcHealthDept\n","GN\n"],[72.84,19.04,0,"\n    Welkarwadi Dispensary\n   ","Welkarwadi Dispensary\n","Welkarwadi L.J.2nd Road BMC Building BMC Ground Floor Building no.4\n",67,67,"Public Health Dept\n","@mybmcHealthDept\n","GN\n"],[72.85,19.04,0,"\n    Shahu Nagar Dispensary\n   ","Shahu Nagar Dispensary\n","Building E-14,Ground Floor shahunagar BMC Building Mahim -17\n",68,68,"Public Health Dept\n","@mybmcHealthDept\n","GN\n"],[72.85,19.03,0,"\n    Matunga Labour Camp Dispensary\n   ","Matunga Labour Camp Dispensary\n","Matunga labour camp,in front of tata power,Dharavi\n",69,69,"Public Health Dept\n","@mybmcHealthDept\n","GN\n"],[72.86,19.05,0,"\n    Pilla Bunglow Dispensary\n   ","Pilla Bunglow Dispensary\n","Pilla Bunglow Mumcipal Dispensary sant Rohidas Road Dharravi-17\n",70,70,"Public Health Dept\n","@mybmcHealthDept\n","GN\n"],[72.85,19.04,0,"\n    Dharavi Main Road Dispensary\n   ","Dharavi Main Road Dispensary\n","Dharavi Main road muncipal Dispensary\n",71,71,"Public Health Dept\n","@mybmcHealthDept\n","GN\n"],[72.86,19.04,0,"\n    Transit Camp Dispensary\n   ","Transit Camp Dispensary\n","Transit camp dispensary,60ft road, Dharavi\n",72,72,"Public Health Dept\n","@mybmcHealthDept\n","GN\n"],[72.85,19.04,0,"\n    Kumbharwada Dispensary\n   ","Kumbharwada Dispensary\n","Ground Floor Rajiv Gandhi SRA Building 90 feet road kumbharwada dharavi- 17\n",73,73,"Public Health Dept\n","@mybmcHealthDept\n","GN\n"],[72.84,19.09,0,"\n    Prabhat Colony Dispensary\n   ","Prabhat Colony Dispensary\n",null,74,74,"Public Health Dept\n","@mybmcHealthDept\n","HE\n"],[72.85,19.07,0,"\n    Kolekalyan Dispensary\n   ","Kolekalyan Dispensary\n","Shantinagar industrial estate, Near Hayat Hotel , Santacruz East Mumbai – 55.\n",75,75,"Public Health Dept\n","@mybmcHealthDept\n","HE\n"],[72.85,19.08,0,"\n    Swami Vivekanand Nagar Dispensary\n   ","Swami Vivekanand Nagar Dispensary\n","Datta Mandir Road,Vakola,Santacruz-East\n",76,76,"Public Health Dept\n","@mybmcHealthDept\n","HE\n"],[72.86,19.08,0,"\n    Kalina Dispensary\n   ","Kalina Dispensary\n","Near Kalina Market, kalina kurla road,kalina,Santacruz east\n",77,77,"Public Health Dept\n","@mybmcHealthDept\n","HE\n"],[72.86,19.06,0,"\n    Bharat Nagar Dispensary\n   ","Bharat Nagar Dispensary\n","Windsor House, MCGM Library , Santacruz East\n",78,78,"Public Health Dept\n","@mybmcHealthDept\n","HE\n"],[72.85,19.06,0,"\n    Kherwadi Dispensary\n   ","Kherwadi Dispensary\n","kherwadi Dispensary,Kherwadi, bandra 51\n",79,79,"Public Health Dept\n","@mybmcHealthDept\n","HE\n"],[72.84,19.06,0,"\n    Jawahar Nagar Dispensary\n   ","Jawahar Nagar Dispensary\n","Jawahar Nagar Dispensary,Golibar Road, Khar east\n",80,80,"Public Health Dept\n","@mybmcHealthDept\n","HE\n"],[72.84,19.05,0,"\n    Gurunanak Dispensary\n   ","Gurunanak Dispensary\n","Bandra Station, Near Bandra Dharmshala Road, Bandra West, Mumbai\n",81,81,"Public Health Dept\n","@mybmcHealthDept\n","HW\n"],[72.8377,19.0701,0,"\n    Ambedkar Dispensary\n   ","Ambedkar Dispensary\n","Dr. Ambedkar Road, Khar West\n",82,82,"Public Health Dept\n","@mybmcHealthDept\n","HW\n"],[72.84,19.09,0,"\n    Shastri Nagar Dispensary\n   ","Shastri Nagar Dispensary\n","shastri nagar disp. Near shiv sena shakha, shastri nagar , Santakruz west\n",83,83,"Public Health Dept\n","@mybmcHealthDept\n","HW\n"],[72.83,19.07,0,"\n    Khar Danda Dispensary\n   ","Khar Danda Dispensary\n","Khar Danda Chavari galli, Khar west\n",84,84,"Public Health Dept\n","@mybmcHealthDept\n","HW\n"],[72.84,19.07,0,"\n    Old Khar Dispensary\n   ","Old Khar Dispensary\n","Khar TB Clinic, S. V. Rd, Khar West\n",85,85,"Public Health Dept\n","@mybmcHealthDept\n","HW\n"],[72.85,19.11,0,"\n    Sambhaji Nagar Dispensary\n   ","Sambhaji Nagar Dispensary\n","Sahar Road, Opp. Nagar Soc., Andheri (E)  400069\n",86,86,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.859,19.1185,0,"\n    Gundavli Dispensary\n   ","Gundavli Dispensary\n","Ground Floor,MCGM K/E Ward office,Gundavli,gaothan, Azad Road, Andheri (E) 400069\n",87,87,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.85,19.1,0,"\n    Paranjape Dispensary\n   ","Paranjape Dispensary\n","Nehru Road, BMC Bldg., 1st Floor, Nehru Road, Vile Parle, Mumbai-400057\n",88,88,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.85,19.11,0,"\n    Koldongari Dispensary\n   ","Koldongari Dispensary\n","Sahar Road, Opp. Garware Chowk, Koldongri, Andheri (E), 400069\n",89,89,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.85,19.13,0,"\n    Natwar Nagar Dispensary\n   ","Natwar Nagar Dispensary\n","Road No.05,Shiljeet Apt., Natwar Nagar, Jogeshwari (E) 400060\n",90,90,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.88,19.11,0,"\n    Marol Dispensary\n   ","Marol Dispensary\n","Near fish Market, Opp. Saifee Park, Church Road, Marol, Andheri (E) 400059\n",91,91,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.86,19.14,0,"\n    Caves Road Dispensary\n   ","Caves Road Dispensary\n","Squartters Colony, Maternity home, Sanjay Gandhi Nagar, Jogeshwari (E), 400060\n",92,92,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.87,19.13,0,"\n    Sundar Nagar Dispensary\n   ","Sundar Nagar Dispensary\n","Mahakali Caves Road, Andheri (E), 400093\n",93,93,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.86,19.13,0,"\n    Hari Nagar Dispensary\n   ","Hari Nagar Dispensary\n","Shankarwadi, Pump House, Jogeshwari (E), 400093\n",94,94,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.8492,19.11,0,"\n    Sambhaji Nagar Ayurvedic Dispensary\n   ","Sambhaji Nagar Ayurvedic Dispensary\n","Shahaji Raje Road, Vile Parle(E), 400057\n",95,95,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.8886,19.123,0,"\n    Mangala Municipal Nursing Home Dispensary\n   ","Mangala Municipal Nursing Home Dispensary\n","Baman Daya Pada, Miletary Road, Andheri (E),400059\n",96,96,"Public Health Dept\n","@mybmcHealthDept\n","KE\n"],[72.85,19.12,0,"\n    N.J.Wadia Dispensary\n   ","N.J.Wadia Dispensary\n","GAZDHAAR HALL, S.V ROAD, NEAR ANDHERI WEST RAILWAY STATION, ANDHERI WEST , MUMBAI-400058\n",97,97,"Public Health Dept\n","@mybmcHealthDept\n","KW\n"],[72.85,19.15,0,"\n    Oshiwara Dispensary\n   ","Oshiwara Dispensary\n","Link Plaza,in front of lashkria tower aadarsh nagar behram baugh jogeshwari west\n",98,98,"Public Health Dept\n","@mybmcHealthDept\n","KW\n"],[72.84,19.1,0,"\n    Parle Market Dispensary\n   ","Parle Market Dispensary\n","Amasaheb vartak bmc market compound sarojini road parla west mumbai 400056\n",99,99,"Public Health Dept\n","@mybmcHealthDept\n","KW\n"],[72.81,19.14,0,"\n    Versova Dispensary\n   ","Versova Dispensary\n","yari road, near muncipal school, Andheri west Mumbai 61.\n",100,100,"Public Health Dept\n","@mybmcHealthDept\n","KW\n"],[72.83,19.11,0,"\n    Juhu Jalan Dispensary\n   ","Juhu Jalan Dispensary\n","N S Rd Number 13, Chand Society, MHADA Colony, Juhu, Mumbai, Maharashtra 400049\n",101,101,"Public Health Dept\n","@mybmcHealthDept\n","KW\n"],[72.82,19.13,0,"\n    Banana Leaf Dispensary\n   ","Banana Leaf Dispensary\n","Juhu versova link road andheri west mumbai 400053\n",102,102,"Public Health Dept\n","@mybmcHealthDept\n","KW\n"],[72.83,19.15,0,"\n    Millat Nagar Dispensary\n   ","Millat Nagar Dispensary\n","Millat nagar Muncipal Dispensary ,lokhandwala back road, near yamuna nagar, Andheri (west),\n",103,103,"Public Health Dept\n","@mybmcHealthDept\n","KW\n"],[72.84,19.17,0,"\n    Topiwala  Dispensary\n   ","Topiwala  Dispensary\n","Topiwala Maternity home, opp lords College, station Rd, Goregaon West\n",104,104,"Public Health Dept\n","@mybmcHealthDept\n","PS\n"],[72.85,19.18,0,"\n    Chincholi Squatter's Dispensary\n   ","Chincholi Squatter's Dispensary\n","Chincholi Fatak, Goregoan East\n",105,105,"Public Health Dept\n","@mybmcHealthDept\n","PS\n"],[72.8962,19.1246,0,"\n    Sunder Nagar Dispensary\n   ","Sunder Nagar Dispensary\n","BMC Bldg, Pawan Baug,Nr,saraf College, Malad west\n",106,106,"Public Health Dept\n","@mybmcHealthDept\n","PS\n"],[72.84,19.19,0,"\n    Choksy Dispensary\n   ","Choksy Dispensary\n","Marve Rd., In front of Nutan High School, Malad (W)\n",107,107,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.85,19.18,0,"\n    Nemani Dispensary\n   ","Nemani Dispensary\n","Nr. Nemani High School, Nr. New Era Cinema. Opp. Petrol Pump, Malad (W)\n",108,108,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.82,19.19,0,"\n    Malvani Dispensary\n   ","Malvani Dispensary\n","Malvani gate no.6, OPP. Holy Angel School, Malvani, Malad W\n",109,109,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.82,19.19,0,"\n    Rathodi Dispensary\n   ","Rathodi Dispensary\n","Bali Residency Bldg., 1st Flr., Rathodi Bus Stop, behind Petrol Pump, Malad W\n",110,110,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.85,19.19,0,"\n    Goshala Dispensary\n   ","Goshala Dispensary\n","Nr. Diamond Mkt., Goshala Rd., Malad E\n",111,111,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.86,19.19,0,"\n    Kurar Village Dispensary\n   ","Kurar Village Dispensary\n","Siddique Comp., Nr. Ramesh Hotel, Daptari Rd., Kurar Village, Malad E\n",112,112,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.86,19.18,0,"\n    Pathanwadi Dispensary\n   ","Pathanwadi Dispensary\n","Pathanwadi. Mun. Disp., Triveni Ngr., Nr. Suvidha Hsp., Malad E\n",113,113,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.87,19.18,0,"\n    Riddhi Garden Dispensary\n   ","Riddhi Garden Dispensary\n","Nr. Riddhi Garden Tower, Wageshwari Temple, General A.K.Vaidhya Marg, Dindoshi, Malad E\n",114,114,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.84,19.2,0,"\n    Valnai Dispensary\n   ","Valnai Dispensary\n","Valnai Mun. School, Opp. Orlem Church, Malad W\n",115,115,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.79,19.21,0,"\n    Manori Dispensary\n   ","Manori Dispensary\n","Manori Village, Marve Rd., Malad W\n",116,116,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.86,19.18,0,"\n    School Road Dispensary\n   ","School Road Dispensary\n","K.D. Heights bldg no.3, Rani Sati Rd., Nr. Laxminarayan Temple, Malad E\n",117,117,"Public Health Dept\n","@mybmcHealthDept\n","PN\n"],[72.85,19.2,0,"\n    Akurli Dispensary\n   ","Akurli Dispensary\n","Akurli Municipal Dispensary Opp Farid Estate next to oxford International School gausiya chawk thakur village kandivali east mumbai 400101\n",118,118,"Public Health Dept\n","@mybmcHealthDept\n","RS\n"],[72.87,19.21,0,"\n    Hanuman Nagar Dispensary\n   ","Hanuman Nagar Dispensary\n","Sambhaji Nagar Complex near by Hanuman Mandir  Kandivali East 400101\n",119,119,"Public Health Dept\n","@mybmcHealthDept\n","RS\n"],[72.8366,19.2073,0,"\n    Shailaja Vijay Girkar Dispensary\n   ","Shailaja Vijay Girkar Dispensary\n","shaileja vijay girkar municipal dispensary, dahanukarwadi, m g road, kandivali west\n",120,120,"Public Health Dept\n","@mybmcHealthDept\n","RS\n"],[72.83,19.21,0,"\n    Charkop Sector 1  Dispensary\n   ","Charkop Sector 1  Dispensary\n","Charkop Sec-1 Muncipal Dispensary Sector-1 Charkop Near BMC School  Kandivali west\n",121,121,"Public Health Dept\n","@mybmcHealthDept\n","RS\n"],[72.83,19.2,0,"\n    Babrekar Nagar Dispensary\n   ","Babrekar Nagar Dispensary\n","Ganesh Nagar Babrekar Nagar Kandivali West\n",122,122,"Public Health Dept\n","@mybmcHealthDept\n","RS\n"],[72.91,19.05,0,"\n    New Centenary Dispensary\n   ","New Centenary Dispensary\n","Ashiyana Building Nare usha mat home s modi road kandivali west 400067\n",123,123,"Public Health Dept\n","@mybmcHealthDept\n","RS\n"],[72.84,19.23,0,"\n    M.H.B. Dispensary\n   ","M.H.B. Dispensary\n","Old MHB Colony-MCGM,Borivali west,Mumbai 400091\n",124,124,"Public Health Dept\n","@mybmcHealthDept\n","RC\n"],[72.83,19.23,0,"\n    Gorai MHADA Dispensary\n   ","Gorai MHADA Dispensary\n","Gorai Mhada Part-1,near suvidya school,opposite plot no 112,Gorai,Borivali west Mumbai 400092\n",125,125,"Public Health Dept\n","@mybmcHealthDept\n","RC\n"],[72.83,19.22,0,"\n    Charkop Sector 5 Dispensary\n   ","Charkop Sector 5 Dispensary\n","Near Apna Bazar sector -5,charkop.Borivali west 400067\n",126,126,"Public Health Dept\n","@mybmcHealthDept\n","RC\n"],[72.87,19.23,0,"\n    Kajupada Dispensary\n   ","Kajupada Dispensary\n","Chougule nagar ,mourya building ,1 st floor ,Borivali east ,Mumbai -400066\n",127,127,"Public Health Dept\n","@mybmcHealthDept\n","RC\n"],[72.8666,19.224,0,"\n    K.K. Dispensary\n   ","K.K. Dispensary\n","at juction of s.v. and s.v.p rd,borivali west. BMC buliding.Mumbai 400092\n",128,128,"Public Health Dept\n","@mybmcHealthDept\n","RC\n"],[72.85,19.23,0,"\n    Ekser Dispensary\n   ","Ekser Dispensary\n","Eksar Talepakhadi,opp Eksar talav,Borivali west Mumbai 400092\n",129,129,"Public Health Dept\n","@mybmcHealthDept\n","RC\n"],[72.79,19.24,0,"\n    Gorai Village Dispensary\n   ","Gorai Village Dispensary\n","Near Gorai cross,Gorai village ,Borivali west,Mumbai 400091\n",130,130,"Public Health Dept\n","@mybmcHealthDept\n","RC\n"],[72.86,19.25,0,"\n    Y R Tawde Dispensary\n   ","Y R Tawde Dispensary\n","Hari Shankar Joshi Road, Dahisar East\n",131,131,"Public Health Dept\n","@mybmcHealthDept\n","RN\n"],[72.85,19.25,0,"\n    Shastri Nagar Dispensary\n   ","Shastri Nagar Dispensary\n","Holy Cross Road, Navagaon, Dahisar West\n",132,132,"Public Health Dept\n","@mybmcHealthDept\n","RN\n"],[72.86,19.25,0,"\n    L T Road Dispensary\n   ","L T Road Dispensary\n","L T Road, Dahisar West\n",133,133,"Public Health Dept\n","@mybmcHealthDept\n","RN\n"],[72.86,19.26,0,"\n    Anand Nagar Dispensary\n   ","Anand Nagar Dispensary\n","Manan Building, Anand Nagar, Dahisar West\n",134,134,"Public Health Dept\n","@mybmcHealthDept\n","RN\n"],[72.8737,19.2605,0,"\n    Pramila Nagar Dispensary\n   ","Pramila Nagar Dispensary\n","Mhada Colony, Kandarpada, Dahisar West\n",135,135,"Public Health Dept\n","@mybmcHealthDept\n","RN\n"],[72.88,19.08,0,"\n    Bail Bazar Dispensary\n   ","Bail Bazar Dispensary\n","C/O ANANDIBAI JOSHI MATERNITY HOME, KALE MARG ANDHERI KURLA ROAD NEAR POLIC CHOWKI BAIL BAZAR KURLA (WEST)  MUMBAI 400072\n",136,136,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.92,19.1192,0,"\n    Bibi Fatima Dispensary\n   ","Bibi Fatima Dispensary\n","BELGRAMI ROAD NEAR LBS KURLA WEST\n",137,137,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.8798,19.0704,0,"\n    Buddha Colony Dispensary\n   ","Buddha Colony Dispensary\n","Buddha Colony kurla West\n",138,138,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.9026,19.1084,0,"\n    Chandivali Dispensary\n   ","Chandivali Dispensary\n","chandivali Dispensary,Sangharsh nagar\n",139,139,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.89,19.09,0,"\n    Kajupada Dispensary\n   ","Kajupada Dispensary\n","Kajupada municipal dispensary, kajupada pipeline, near Ganesh maidan, kurla west, Mumbai 400072\n",140,140,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.89,19.06,0,"\n    Nehru Nagar Dispensary\n   ","Nehru Nagar Dispensary\n","MOTHER DAIRY ROAD, MOTHER DAIRY NEHRU NAGAR KURLA (E)\n",141,141,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.8846,19.1315,0,"\n    Chunabhatti Dispensary\n   ","Chunabhatti Dispensary\n","V N Purav marg chunabhatti mumbai 22\n",142,142,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.89,19.07,0,"\n    Tilak Nagar Dispensary\n   ","Tilak Nagar Dispensary\n","ROYAL GARGEN CHS, CTS NO 47, TILAK NAGAR (W) 400089\n",143,143,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.9,19.1,0,"\n    Asalpha Village Dispensary\n   ","Asalpha Village Dispensary\n","subash nagar Asalpha village pipeline\n",144,144,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.89,19.09,0,"\n    Himalaya Dispensary\n   ","Himalaya Dispensary\n","Himalaya soc disp,near sabri bldg,NSS road Ghatkopar (w)\n",145,145,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.88,19.09,0,"\n    Safed Pool Dispensary\n   ","Safed Pool Dispensary\n","Safed Pool ,Kurla West\n",146,146,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.89,19.1,0,"\n    Mohili Village Dispensary\n   ","Mohili Village Dispensary\n","Mohili Village,Kurla West\n",147,147,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.88,19.08,0,"\n    Christian Village Dispensary\n   ","Christian Village Dispensary\n","CHRISTIAN VILLAGE DISPENSARY FATHER PETER PERIERA ROAD CHRISTIAN VILLAGE KURLA WEST\n",148,148,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.8773,19.0599,0,"\n    Qureshi Nagar Dispensary\n   ","Qureshi Nagar Dispensary\n","Qureshi nagar,Kurla West\n",149,149,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.88,19.07,0,"\n    Nahar Amrit Shakti Dispensary\n   ","Nahar Amrit Shakti Dispensary\n","Nahar Amrit Shakti Dispensary\n",150,150,"Public Health Dept\n","@mybmcHealthDept\n","L\n"],[72.9043,19.0357,0,"\n    Anik Nagar Dispensary\n   ","Anik Nagar Dispensary\n","SURAKSHA SOCIETY. BLDG. NO.4, 1ST FLOOR, MHADA COLONY, VASHI NAKA, CHEMBUR-74\n",151,151,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.9,19.03,0,"\n    Ayodhya Nagar Dispensary\n   ","Ayodhya Nagar Dispensary\n","NEAR FISH MARKET, JAY BHAVANI MARG, VASHI NAKA, CHEMBUR-74.\n",152,152,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.9,19.01,0,"\n    Gawanpada Dispensary\n   ","Gawanpada Dispensary\n","B.D.PATIL MARG, GAVANPADA,   MUMBAI-74\n",153,153,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.92,19.05,0,"\n    Deonar Dispensary\n   ","Deonar Dispensary\n","ROOM NO. 123, DEONAR SHOPPING CENTRE, DEONAR MUNICIPAL COLONY, GOVANDI (W)\n",154,154,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.94,19.05,0,"\n    Maharashtra Nagar Dispensary (Cheetah)\n   ","Maharashtra Nagar Dispensary (Cheetah)\n","BLDG. NO. 18, 1st FLOOR, ROOM NO.101,102,115 & 116. MAHARASHTRA NAGAR MANKHURD, MUMBAI-88.\n",155,155,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.93,19.06,0,"\n    Kamla Raman Nagar Dispensary (Baiganwadi)\n   ","Kamla Raman Nagar Dispensary (Baiganwadi)\n","BEHIND BHADRA HOSPITAL, ROAD TO DUMPING GROUND, MUMBAI-43, GOVANDI East\n",156,156,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.91,19.06,0,"\n    Ram Manohar Lohiya (R B K Dispensary)\n   ","Ram Manohar Lohiya (R B K Dispensary)\n","CITY SURVEY NO. 4A/8/1 & 4A/8/2, UNIVERSAL MAJESTIC BLDG. P.L.LOKHANDE MARG, CHEMBUR-400071\n",157,157,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.89,19.09,0,"\n    L. U. Gadkari Dispensary (Vashi Naka)\n   ","L. U. Gadkari Dispensary (Vashi Naka)\n","R/1 BLDG. AMAN SOCIETY, NEAR DATTA MANDIR, VISHNU NAGAR, L.U.GADAKARI MARG, CHEMBUR, MUMBAI-74.\n",158,158,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.9235,19.0589,0,"\n    New Baigan Wadi Dispensary\n   ","New Baigan Wadi Dispensary\n","PLOT NO.32, ROAD NO.8, RAFIQ NAGAR, NEAR SANJAY NAGAR & 90FT. ROAD, GOVANDI, MUMBAI-43\n",159,159,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.93,19.05,0,"\n    A. B. Sathe Nagar Dispensary\n   ","A. B. Sathe Nagar Dispensary\n","R4, MMRDA BLDG, SATHE NAGAR, MANKHURD, MUMBAI 43\n",160,160,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.95,19.03,0,"\n    Trombay Dispensary\n   ","Trombay Dispensary\n","NEAR POST OFFICE, MAIN ROAD, TROMBAY\n",161,161,"Public Health Dept\n","@mybmcHealthDept\n","ME\n"],[72.89,19.05,0,"\n    Chembur Naka Dispensary\n   ","Chembur Naka Dispensary\n","CHEMBUR NAKA DISPENSARY, BLDG NO. 2, GROUND FLOOR, CHEMBUR 71\n",162,162,"Public Health Dept\n","@mybmcHealthDept\n","MW\n"],[72.89,19.05,0,"\n    Chembur Colony Dispensary\n   ","Chembur Colony Dispensary\n","CHEMBUR COLONY DISPENSARY, CHEMBUR 71\n",163,163,"Public Health Dept\n","@mybmcHealthDept\n","MW\n"],[72.908,19.0614,0,"\n    Labour Camp Dispensary\n   ","Labour Camp Dispensary\n","LABOUR CAMP DISPENSARY, P.L.LOKHANDE MARG, CHEMBUR-89.\n",164,164,"Public Health Dept\n","@mybmcHealthDept\n","MW\n"],[72.89,19.05,0,"\n    Lal Dongar Dispensary\n   ","Lal Dongar Dispensary\n","LAL DONGAR DISPENSARY, OPP ALTAVISTA TOWAR, NEAR SURANA SETHIYA HOSPITAL, V.N. PURAN MARG, CHEMBUR 71\n",165,165,"Public Health Dept\n","@mybmcHealthDept\n","MW\n"],[72.89,19.01,0,"\n    Mahul SRA Dispensary\n   ","Mahul SRA Dispensary\n","MAHUL SRA DISPENSARY, GROUND FLOOR, BLDG NO. 42, MHADA SRA COMPLEX, MAHUL 74\n",166,166,"Public Health Dept\n","@mybmcHealthDept\n","MW\n"],[72.89,19.01,0,"\n    Mahul Village Dispensary\n   ","Mahul Village Dispensary\n","MAHUL DISPENSARY, NEAR FISH MARKET, MAHUL ROAD, CHEMBUR 74\n",167,167,"Public Health Dept\n","@mybmcHealthDept\n","MW\n"],[72.91,19.09,0,"\n    Sarvodaya Dispensary\n   ","Sarvodaya Dispensary\n","Sarvodaya Muncipal Dispensary, Khot lane Near Bata showroom , Jyoti Chemburs Ghatkopar w Mumbai  400086\n",168,168,"Public Health Dept\n","@mybmcHealthDept\n","N\n"],[72.91,19.1,0,"\n    Park Site Dispensary\n   ","Park Site Dispensary\n","PARKSITE MUNCIPAL UPHC ROAD NO 1 BEHIND   OLD JANKALYAN BANK VIKHROLI W 400079\n",169,169,"Public Health Dept\n","@mybmcHealthDept\n","N\n"],[72.9,19.09,0,"\n    Parshi Wadi Dispensary\n   ","Parshi Wadi Dispensary\n","parshiwad muncipal i disp,jai maharashtra  ganesh maidan,parshiwadi,ghatkopar west 4000086,\n",170,170,"Public Health Dept\n","@mybmcHealthDept\n","N\n"],[72.92,19.09,0,"\n    Pant Nagar Dispensary\n   ","Pant Nagar Dispensary\n","NEAR BMC SCHOOL NO 3, PANTNGAR\n",171,171,"Public Health Dept\n","@mybmcHealthDept\n","N\n"],[72.92,19.08,0,"\n    Ramabai Dispensary\n   ","Ramabai Dispensary\n","KDGM RAMABAI COLONY UPHC ,ON EASTERN EXPRESS HIGHWAY,NEAR SHAHID SAMARK,GHATKOPAR(East)-75..MCGM property\n",172,172,"Public Health Dept\n","@mybmcHealthDept\n","N\n"],[72.91,19.09,0,"\n    Sainath Dispensary\n   ","Sainath Dispensary\n","Matoshree Ramabai Thakare Mat.Home Sainath nagar Rd Ganesh Maidan Ghatkopar W\n",173,173,"Public Health Dept\n","@mybmcHealthDept\n","N\n"],[72.9,19.08,0,"\n    Kirol Village Dispensary\n   ","Kirol Village Dispensary\n","near Vidyavihar(w)station,opp.BESTdepot\n",174,174,"Public Health Dept\n","@mybmcHealthDept\n","N\n"],[72.9058,19.073,0,"\n    Nath Pai Dispensary\n   ","Nath Pai Dispensary\n","Venus Appartment, ground floor, opp. Dr hedagewar gardan, vidhyabhavan marg, near 90 feet road, nath pai nagar, garodiya, ghatkoper east mumbai 400072\n",175,175,"Public Health Dept\n","@mybmcHealthDept\n","N\n"],[72.94,19.14,0,"\n    M.V.R. Shinde Marg Dispensary\n   ","M.V.R. Shinde Marg Dispensary\n","M.V.R.Shinde Marg, Ishwarnagar MGCB Office, Bhandup West\n",176,176,"Public Health Dept\n","@mybmcHealthDept\n","S\n"],[72.93,19.15,0,"\n    Shivaji Talav Dispensary\n   ","Shivaji Talav Dispensary\n","Kokan nagar, Ganga Vidyalay Primises near shivajitalao Bhandup\n",177,177,"Public Health Dept\n","@mybmcHealthDept\n","S\n"],[72.905,19.1196,0,"\n    Tirandaz Dispensary\n   ","Tirandaz Dispensary\n","Tirandaz Village, IIT Road, Powai Market\n",178,178,"Public Health Dept\n","@mybmcHealthDept\n","S\n"],[72.8846,19.1315,0,"\n    Nahur Dispensary\n   ","Nahur Dispensary\n","MHADA colony shop no 3,4,5,Subhash Nagar,Bhandup\n",179,179,"Public Health Dept\n","@mybmcHealthDept\n","S\n"],[72.94,19.13,0,"\n    Kanjur Village Dispensary\n   ","Kanjur Village Dispensary\n","Kanjur Gao Near Police station Kanjur East\n",180,180,"Public Health Dept\n","@mybmcHealthDept\n","S\n"],[72.94,19.12,0,"\n    Tagor Nagar Dispensary\n   ","Tagor Nagar Dispensary\n","Suncity building IIT Market Gandhi Nagar\n",181,181,"Public Health Dept\n","@mybmcHealthDept\n","S\n"],[72.9306,19.1627,0,"\n    Tulshet Pada Dispensary\n   ","Tulshet Pada Dispensary\n","Tulshetpada mun disp lake rd, Bhandup\n",182,182,"Public Health Dept\n","@mybmcHealthDept\n","S\n"],[72.93,19.15,0,"\n    Tembhi Pada Dispensary\n   ","Tembhi Pada Dispensary\n","Tembhipada Mun.disp, Nardas nagar, Near Pach mandir, Bhandup (West)\n",183,183,"Public Health Dept\n","@mybmcHealthDept\n","S\n"],[72.95,19.18,0,"\n    PJK Dispensary\n   ","PJK Dispensary\n","M.G.Road, Panch Rasta, opp Kirtimahal Hotel, Mulund (w). Mum 80.\n",184,184,"Public Health Dept\n","@mybmcHealthDept\n","T\n"],[72.95,19.18,0,"\n    DDU Marg Dispensary\n   ","DDU Marg Dispensary\n","Din Dayal Upadhyay Marg, Opp Croma Shop, Checknaka, Mulund (w). Mum 80\n",185,185,"Public Health Dept\n","@mybmcHealthDept\n","T\n"],[72.94,19.17,0,"\n    Mulund Colony Dispensary\n   ","Mulund Colony Dispensary\n","Zulelal Marg, Opp Jay Bharat School, Mulund colony , Mulund (w). Mum80.\n",186,186,"Public Health Dept\n","@mybmcHealthDept\n","T\n"]],"fields":[{"name":"X","type":"real","format":"","analyzerType":"FLOAT"},{"name":"Y","type":"real","format":"","analyzerType":"FLOAT"},{"name":"Z","type":"integer","format":"","analyzerType":"INT"},{"name":"Name","type":"string","format":"","analyzerType":"STRING"},{"name":"Current_Na","type":"string","format":"","analyzerType":"STRING"},{"name":"Current_co","type":"string","format":"","analyzerType":"STRING"},{"name":"OBJECTID","type":"integer","format":"","analyzerType":"INT"},{"name":"OBJECTID_1","type":"integer","format":"","analyzerType":"INT"},{"name":"Owner_Dept","type":"string","format":"","analyzerType":"STRING"},{"name":"Twitter_Handle","type":"string","format":"","analyzerType":"STRING"},{"name":"Ward","type":"string","format":"","analyzerType":"STRING"}],"type":"","metadata":{"id":"lqft7w","format":"row","label":"Mumbai City Dispensaries Map.csv","size":37232},"disableDataOperation":false}}];
+            const config = {"version":"v1","config":{"visState":{"filters":[],"layers":[{"id":"74qnw4b","type":"heatmap","config":{"dataId":"lqft7w","columnMode":"points","label":"Density Of Dispensaries ","color":[241,92,23],"highlightColor":[252,242,26,255],"columns":{"lat":"Y","lng":"X"},"isVisible":true,"visConfig":{"opacity":0.8,"colorRange":{"colors":["#4C0035","#880030","#B72F15","#D6610A","#EF9100","#FFC300"],"name":"Global Warming","type":"sequential","category":"Uber"},"radius":37,"intensity":1,"threshold":0.661,"aggregation":"SUM"},"hidden":false,"textLabel":[{"field":null,"color":[255,255,255],"size":18,"weight":400,"offset":[0,0],"anchor":"start","alignment":"center","outlineWidth":0,"outlineColor":[255,0,0,255],"background":false,"backgroundColor":[0,0,200,255],"collisionEnabled":false}]},"visualChannels":{"weightField":null,"weightScale":"linear"}}],"effects":[],"annotations":[],"interactionConfig":{"tooltip":{"fieldsToShow":{"lqft7w":[{"name":"X","format":null},{"name":"Y","format":null},{"name":"Z","format":null},{"name":"Name","format":null},{"name":"Current_Na","format":null}]},"timezone":null,"compareMode":false,"compareType":"absolute","enabled":true},"legend":{"hideInvisibleLayers":false,"enabled":true},"brush":{"size":2.5,"enabled":false},"geocoder":{"limitSearch":false,"color":[255,0,0],"enabled":false},"coordinate":{"enabled":false},"annotation":{"enabled":false},"zoomOpacity":{"controllers":[],"enabled":false}},"layerBlending":"normal","overlayBlending":"normal","splitMaps":[],"animationConfig":{"currentTime":null,"speed":1,"timeFormat":null,"timezone":null},"editor":{"features":[],"visible":true},"layerOrder":["74qnw4b"],"groupBys":[],"joins":[]},"mapState":{"bearing":0,"dragRotate":false,"latitude":19.08587832190218,"longitude":72.90359078015072,"pitch":0,"zoom":10.352132238856408,"isSplit":false,"isViewportSynced":true,"isZoomLocked":false,"splitMapViewports":[],"maxPitch":60,"mapSplitMode":"SINGLE_MAP","swipeComparePercentage":50,"mapViewMode":"MODE_2D","globe":{"enabled":false,"config":{"atmosphere":true,"hugeHalo":true,"hugeHaloRadius":3.5,"hugeHaloOpacity":0.2,"azimuth":false,"azimuthAngle":45,"terminator":true,"terminatorOpacity":0.35,"basemap":true,"labels":false,"labelsColor":[114.75,114.75,114.75],"adminLines":true,"adminLinesColor":[40,63,93],"water":true,"waterColor":[17,35,48],"surface":true,"surfaceColor":[9,16,29],"backgroundColor":[4,9,17],"stars":true}}},"mapStyle":{"styleType":"dark-matter","topLayerGroups":{},"visibleLayerGroups":{"label":true,"road":true,"border":false,"building":true,"water":true,"land":true,"3d building":false},"threeDBuildingColor":[15.035172933000911,15.035172933000911,15.035172933000911],"backgroundColor":[0,0,0],"mapStyles":{}},"uiState":{"mapControls":{"mapLegend":{"active":true,"settings":{"position":{"x":328.875,"anchorX":"left","y":56.66666793823242,"anchorY":"top"}}},"chart":{"active":false},"mapInfo":{"active":true,"show":true}},"locale":"en","theme":"dark"}}};
+            const info = null;
+
+            const loadedData = keplerGl.KeplerGlSchema.load(
+              datasets,
+              config
+            );
+
+            // The 500 ms delay is a historical workaround for a race where
+            // keplerGl re-initialises and overwrites config applied synchronously.
+            // The pre-seeded styleType above removes the basemap flash on first
+            // render; this dispatch still applies the full saved config (layers,
+            // viewport, layer groups, etc.) once the component has settled.
+            window.setTimeout(() => {
+              store.dispatch(
+                keplerGl.addDataToMap({
+                  datasets: loadedData.datasets,
+                  config: loadedData.config,
+                  info,
+                  options: {
+                    centerMap: false,
+                  },
+                })
+              );
+            }, 500);
+          }(KeplerGl, store))
+        </script>
+      </body>
+    </html>
+  

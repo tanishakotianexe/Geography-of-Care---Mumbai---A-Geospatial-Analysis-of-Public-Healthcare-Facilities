@@ -1,0 +1,18 @@
+Project Resources
+
+This file contains the main websites and tools used for my Mumbai Public Healthcare Geospatial Analysis project.
+
+Data Sources
+- BMC Vital Statistics: https://portal.mcgm.gov.in/irj/portal/anonymous/qlvitalstatisticsreport
+- BMC Civic Demographics: https://portal.mcgm.gov.in/irj/portal/anonymous/qlCivicDemographics
+- Mumbai Public Health Centres Dataset: https://data.opencity.in/dataset/mumbai-city-public-health-centres-maps
+- Mumbai Ward Boundaries: https://bharatlas.com/view/wards_mumbai
+
+Tools Used
+- Kepler.gl: Creating interactive maps. https://kepler.gl/
+- Google Colab: Cleaning and processing data. https://colab.research.google.com/
+- GeoJSON.io: Checking ward boundaries. https://geojson.io/
+- MyGeodata Cloud: Converting geographic files. https://mygeodata.cloud/
+- Poly Pizza: Additional 3D model resource. https://poly.pizza/m/tVqkTeQhCO
+
+These resources helped me collect healthcare and population data, prepare geographic files, and create maps for the project.
