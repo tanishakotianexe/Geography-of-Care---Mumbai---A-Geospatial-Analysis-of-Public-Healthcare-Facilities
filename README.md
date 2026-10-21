@@ -11,6 +11,8 @@ Geography of Care – Mumbai is a geospatial project that explores the distribut
 The project uses interactive maps to make healthcare locations and ward-level geographic information easier to explore.
 
 
+To open this project, downlaod the Geography Of Care - Mumbai file and open it in your local system.
+
 
 **Objectives**
 
